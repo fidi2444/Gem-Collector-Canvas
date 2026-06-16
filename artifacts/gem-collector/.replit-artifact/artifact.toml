@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Gem Collector"
+version = "1.0.0"
+id = "artifacts/gem-collector"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24171
+
+[services.development]
+run = "pnpm --filter @workspace/gem-collector run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/gem-collector", "run", "build" ]
+publicDir = "artifacts/gem-collector/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24171"
+BASE_PATH = "/"

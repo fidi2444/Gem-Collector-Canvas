@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Gem Collector</title>
+  <style>
+    /* ── Reset & base ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0a0a1a;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      min-height: 100dvh;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      overflow: hidden;
+      touch-action: none;
+    }
+
+    /* ── HUD bar ── */
+    #hud {
+      width: 100%;
+      max-width: 540px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 16px;
+      background: rgba(255,255,255,0.05);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .hud-item { text-align: center; }
+    .hud-label {
+      font-size: 10px;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.4);
+    }
+    .hud-value {
+      font-size: 22px;
+      font-weight: 700;
+      color: #fff;
+      line-height: 1.1;
+    }
+    #scoreEl  { color: #7df9ff; }
+    #highEl   { color: #ffd700; }
+    #levelEl  { color: #b47aff; }
+
+    /* ── Canvas wrapper ── */
+    #canvasWrap {
+      position: relative;
+      width: 100%;
+      max-width: 540px;
+      flex: 1;
+      display: flex;
+      align-items: stretch;
+    }
+
+    #gameCanvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: none;
+    }
+
+    /* ── Overlay (start / game-over) ── */
+    #overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(10,10,26,0.82);
+      backdrop-filter: blur(6px);
+      gap: 18px;
+      z-index: 10;
+    }
+
+    #overlay h1 {
+      font-size: clamp(28px, 8vw, 52px);
+      font-weight: 900;
+      background: linear-gradient(135deg, #7df9ff, #b47aff, #ff6fa8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      letter-spacing: -1px;
+      text-align: center;
+    }
+
+    #overlay p {
+      color: rgba(255,255,255,0.6);
+      font-size: 15px;
+      text-align: center;
+      max-width: 280px;
+      line-height: 1.5;
+    }
+
+    #overlay .final-score {
+      font-size: 38px;
+      font-weight: 800;
+      color: #7df9ff;
+    }
+
+    #startBtn {
+      margin-top: 8px;
+      padding: 14px 48px;
+      font-size: 18px;
+      font-weight: 700;
+      border: none;
+      border-radius: 50px;
+      background: linear-gradient(135deg, #7df9ff, #b47aff);
+      color: #0a0a1a;
+      cursor: pointer;
+      letter-spacing: 0.5px;
+      box-shadow: 0 4px 32px rgba(125,249,255,0.35);
+      transition: transform 0.12s, box-shadow 0.12s;
+    }
+    #startBtn:active { transform: scale(0.95); box-shadow: 0 2px 16px rgba(125,249,255,0.2); }
+
+    /* ── D-Pad touch controls ── */
+    #dpad {
+      position: absolute;
+      bottom: 18px;
+      left: 16px;
+      display: grid;
+      grid-template-columns: repeat(3, 52px);
+      grid-template-rows: repeat(3, 52px);
+      gap: 4px;
+      z-index: 5;
+    }
+
+    .dpad-btn {
+      background: rgba(255,255,255,0.08);
+      border: 1.5px solid rgba(255,255,255,0.18);
+      border-radius: 12px;
+      color: rgba(255,255,255,0.7);
+      font-size: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+      transition: background 0.08s;
+      touch-action: manipulation;
+    }
+    .dpad-btn:active, .dpad-btn.pressed {
+      background: rgba(125,249,255,0.22);
+      border-color: rgba(125,249,255,0.6);
+      color: #7df9ff;
+    }
+    /* Grid positions: up=row1col2, left=row2col1, right=row2col3, down=row3col2 */
+    #dUp    { grid-column: 2; grid-row: 1; }
+    #dLeft  { grid-column: 1; grid-row: 2; }
+    #dRight { grid-column: 3; grid-row: 2; }
+    #dDown  { grid-column: 2; grid-row: 3; }
+
+    /* Hide dpad on hover-capable devices (desktop) */
+    @media (hover: hover) { #dpad { display: none; } }
+  </style>
+</head>
+<body>
+
+<!-- ── HUD ── -->
+<div id="hud">
+  <div class="hud-item">
+    <div class="hud-label">Score</div>
+    <div class="hud-value" id="scoreEl">0</div>
+  </div>
+  <div class="hud-item">
+    <div class="hud-label">Best</div>
+    <div class="hud-value" id="highEl">0</div>
+  </div>
+  <div class="hud-item">
+    <div class="hud-label">Level</div>
+    <div class="hud-value" id="levelEl">1</div>
+  </div>
+</div>
+
+<!-- ── Canvas ── -->
+<div id="canvasWrap">
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- Overlay shown before start and after game over -->
+  <div id="overlay">
+    <h1>&#x1F48E; Gem Collector</h1>
+    <p>Collect gems, dodge enemies.<br>How long can you survive?</p>
+    <button id="startBtn">Play</button>
+  </div>
+
+  <!-- Mobile D-Pad -->
+  <div id="dpad">
+    <div class="dpad-btn" id="dUp">&#9650;</div>
+    <div class="dpad-btn" id="dLeft">&#9664;</div>
+    <div class="dpad-btn" id="dRight">&#9654;</div>
+    <div class="dpad-btn" id="dDown">&#9660;</div>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════
+   GEM COLLECTOR — single-file Canvas game
+   All game logic lives here.
+═══════════════════════════════════════════════════ */
+
+// ── DOM refs ──────────────────────────────────────
+const canvas    = document.getElementById('gameCanvas');
+const ctx       = canvas.getContext('2d');
+const overlay   = document.getElementById('overlay');
+const startBtn  = document.getElementById('startBtn');
+const scoreEl   = document.getElementById('scoreEl');
+const highEl    = document.getElementById('highEl');
+const levelEl   = document.getElementById('levelEl');
+
+// ── Sizing ────────────────────────────────────────
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+function resizeCanvas() {
+  const wrap = canvas.parentElement;
+  canvas.width  = wrap.clientWidth  * DPR;
+  canvas.height = wrap.clientHeight * DPR;
+  ctx.scale(DPR, DPR);
+}
+
+function W() { return canvas.width  / DPR; }
+function H() { return canvas.height / DPR; }
+
+window.addEventListener('resize', () => {
+  resizeCanvas();
+  if (gameState === 'playing') resetPositions();
+});
+resizeCanvas();
+
+// ── Persistent high score ─────────────────────────
+let highScore = parseInt(localStorage.getItem('gemCollectorHigh') || '0', 10);
+highEl.textContent = highScore;
+
+// ── Game state ────────────────────────────────────
+let gameState = 'idle';
+let score = 0;
+let level = 1;
+let raf;
+let lastTime = 0;
+
+// ── Player ───────────────────────────────────────
+const PLAYER_SIZE  = 22;
+const PLAYER_SPEED = 220;
+
+const player = { x: 0, y: 0, vx: 0, vy: 0, trail: [] };
+
+// ── Gems ─────────────────────────────────────────
+const GEM_SIZE    = 14;
+const GEM_COLORS  = ['#7df9ff','#b47aff','#ff6fa8','#ffd700','#7cfc00','#ff8c00'];
+const MAX_GEMS    = 8;
+let gems = [];
+
+// ── Enemies ───────────────────────────────────────
+const ENEMY_COLORS = ['#ff3b3b','#ff7043','#e040fb'];
+let enemies = [];
+
+// ── Stars ────────────────────────────────────────
+const STAR_COUNT = 60;
+let stars = [];
+
+function initStars() {
+  stars = Array.from({ length: STAR_COUNT }, () => ({
+    x: Math.random() * W(),
+    y: Math.random() * H(),
+    r: Math.random() * 1.4 + 0.3,
+    a: Math.random(),
+    da: (Math.random() - 0.5) * 0.8,
+  }));
+}
+
+// ── Particles ────────────────────────────────────
+let particles = [];
+
+function spawnParticles(x, y, color, count = 10) {
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 / count) * i + Math.random() * 0.5;
+    const speed = 60 + Math.random() * 120;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      r: 3 + Math.random() * 4,
+      color,
+      life: 1,
+      decay: 0.8 + Math.random() * 0.6,
+    });
+  }
+}
+
+// ── Input ─────────────────────────────────────────
+const keys = { ArrowUp:false, ArrowDown:false, ArrowLeft:false, ArrowRight:false,
+               w:false, s:false, a:false, d:false };
+
+document.addEventListener('keydown', e => {
+  if (e.key in keys) { keys[e.key] = true; e.preventDefault(); }
+  if (e.key === ' ' && gameState === 'dead') startGame();
+});
+document.addEventListener('keyup', e => { if (e.key in keys) keys[e.key] = false; });
+
+const dpadMap = { dUp:'ArrowUp', dDown:'ArrowDown', dLeft:'ArrowLeft', dRight:'ArrowRight' };
+Object.entries(dpadMap).forEach(([id, key]) => {
+  const btn = document.getElementById(id);
+  const on  = () => { keys[key] = true;  btn.classList.add('pressed'); };
+  const off = () => { keys[key] = false; btn.classList.remove('pressed'); };
+  btn.addEventListener('touchstart',  on,  { passive: true });
+  btn.addEventListener('touchend',    off, { passive: true });
+  btn.addEventListener('touchcancel', off, { passive: true });
+  btn.addEventListener('mousedown', on);
+  btn.addEventListener('mouseup',   off);
+});
+
+// ── Helpers ───────────────────────────────────────
+function rand(min, max) { return Math.random() * (max - min) + min; }
+function randInt(min, max) { return Math.floor(rand(min, max)); }
+function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function safeX(margin = 40) { return rand(margin, W() - margin); }
+function safeY(margin = 40) { return rand(margin, H() - margin); }
+
+function spawnGem() {
+  let x, y;
+  do { x = safeX(GEM_SIZE + 10); y = safeY(GEM_SIZE + 10); }
+  while (dist({ x, y }, player) < 90);
+  gems.push({ x, y, color: GEM_COLORS[randInt(0, GEM_COLORS.length)],
+              angle: Math.random() * Math.PI * 2, pulse: 0, value: 1 });
+}
+
+function spawnEnemy() {
+  let x, y;
+  const side = randInt(0, 4);
+  switch (side) {
+    case 0: x = safeX(); y = -30; break;
+    case 1: x = W() + 30; y = safeY(); break;
+    case 2: x = safeX(); y = H() + 30; break;
+    default: x = -30; y = safeY();
+  }
+  const speed = 60 + level * 12 + Math.random() * 40;
+  const angleToPlayer = Math.atan2(player.y - y, player.x - x) + rand(-0.4, 0.4);
+  const size  = 14 + Math.random() * 8;
+  const color = ENEMY_COLORS[randInt(0, ENEMY_COLORS.length)];
+  enemies.push({ x, y, vx: Math.cos(angleToPlayer) * speed,
+                        vy: Math.sin(angleToPlayer) * speed,
+                 size, color, wobble: Math.random() * Math.PI * 2 });
+}
+
+// ── Reset / start ─────────────────────────────────
+function resetPositions() {
+  player.x = W() / 2; player.y = H() / 2;
+  player.vx = 0; player.vy = 0; player.trail = [];
+}
+
+function startGame() {
+  score = 0; level = 1;
+  gems = []; enemies = []; particles = [];
+  scoreEl.textContent = '0';
+  levelEl.textContent = '1';
+  resetPositions();
+  initStars();
+  for (let i = 0; i < 4; i++) spawnGem();
+  spawnEnemy();
+  overlay.style.display = 'none';
+  gameState = 'playing';
+  lastTime = performance.now();
+  cancelAnimationFrame(raf);
+  raf = requestAnimationFrame(loop);
+}
+
+function showGameOver() {
+  gameState = 'dead';
+  spawnParticles(player.x, player.y, '#ff3b3b', 24);
+  if (score > highScore) {
+    highScore = score;
+    localStorage.setItem('gemCollectorHigh', highScore);
+    highEl.textContent = highScore;
+  }
+  overlay.innerHTML = `
+    <h1>Game Over</h1>
+    <p class="final-score">${score}</p>
+    <p>You reached level ${level}<br>Best: ${highScore}</p>
+    <button id="startBtn">Play Again</button>
+  `;
+  overlay.style.display = 'flex';
+  document.getElementById('startBtn').addEventListener('click', startGame);
+}
+
+// ── Timers ────────────────────────────────────────
+let gemTimer = 0, enemyTimer = 0, levelTimer = 0;
+
+// ── Main loop ─────────────────────────────────────
+function loop(now) {
+  if (gameState !== 'playing' && gameState !== 'dead') return;
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+  if (gameState === 'playing') update(dt);
+  draw(dt);
+  raf = requestAnimationFrame(loop);
+}
+
+// ── Update ────────────────────────────────────────
+function update(dt) {
+  let dx = 0, dy = 0;
+  if (keys.ArrowLeft  || keys.a) dx -= 1;
+  if (keys.ArrowRight || keys.d) dx += 1;
+  if (keys.ArrowUp    || keys.w) dy -= 1;
+  if (keys.ArrowDown  || keys.s) dy += 1;
+  if (dx !== 0 && dy !== 0) { dx *= 0.707; dy *= 0.707; }
+
+  const spd = PLAYER_SPEED + level * 12;
+  player.vx += (dx * spd - player.vx) * 10 * dt;
+  player.vy += (dy * spd - player.vy) * 10 * dt;
+  player.x = clamp(player.x + player.vx * dt, PLAYER_SIZE, W() - PLAYER_SIZE);
+  player.y = clamp(player.y + player.vy * dt, PLAYER_SIZE, H() - PLAYER_SIZE);
+  player.trail.push({ x: player.x, y: player.y });
+  if (player.trail.length > 14) player.trail.shift();
+
+  gemTimer += dt;
+  if (gemTimer > 2.5 && gems.length < MAX_GEMS) { spawnGem(); gemTimer = 0; }
+
+  const enemyInterval = Math.max(0.8, 3.5 - level * 0.25);
+  enemyTimer += dt;
+  if (enemyTimer > enemyInterval) { spawnEnemy(); enemyTimer = 0; }
+
+  levelTimer += dt;
+  if (levelTimer > 15) { level++; levelTimer = 0; levelEl.textContent = level; }
+
+  for (let i = gems.length - 1; i >= 0; i--) {
+    const g = gems[i];
+    g.angle += dt * 2;
+    g.pulse  = (Math.sin(performance.now() / 400 + i) + 1) / 2;
+    if (dist(player, g) < PLAYER_SIZE + GEM_SIZE) {
+      score += g.value + (level - 1);
+      scoreEl.textContent = score;
+      if (score > highScore) {
+        highScore = score; highEl.textContent = highScore;
+        localStorage.setItem('gemCollectorHigh', highScore);
+      }
+      spawnParticles(g.x, g.y, g.color, 12);
+      gems.splice(i, 1);
+    }
+  }
+
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    e.wobble += dt * 3;
+    const ax = player.x - e.x, ay = player.y - e.y;
+    const d  = Math.hypot(ax, ay) || 1;
+    const steer = 80 + level * 8;
+    e.vx += (ax / d) * steer * dt;
+    e.vy += (ay / d) * steer * dt;
+    const maxSpd = 80 + level * 14;
+    const spd2 = Math.hypot(e.vx, e.vy);
+    if (spd2 > maxSpd) { e.vx = e.vx / spd2 * maxSpd; e.vy = e.vy / spd2 * maxSpd; }
+    e.x += e.vx * dt; e.y += e.vy * dt;
+    if (e.x < -120 || e.x > W() + 120 || e.y < -120 || e.y > H() + 120) {
+      enemies.splice(i, 1); continue;
+    }
+    if (dist(player, e) < PLAYER_SIZE + e.size - 4) { showGameOver(); return; }
+  }
+
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    p.vx *= (1 - 3 * dt); p.vy *= (1 - 3 * dt);
+    p.life -= p.decay * dt;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  stars.forEach(s => {
+    s.a = clamp(s.a + s.da * dt, 0.1, 1);
+    if (s.a <= 0.1 || s.a >= 1) s.da *= -1;
+  });
+}
+
+// ── Draw ──────────────────────────────────────────
+function draw(dt) {
+  ctx.fillStyle = '#0a0a1a';
+  ctx.fillRect(0, 0, W(), H());
+  drawStars(); drawGrid(); drawParticles(); drawGems(); drawEnemies();
+  if (gameState === 'playing') { drawPlayerTrail(); drawPlayer(); }
+}
+
+function drawGrid() {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.025)';
+  ctx.lineWidth = 1;
+  const step = 48;
+  for (let x = 0; x < W(); x += step) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H()); ctx.stroke(); }
+  for (let y = 0; y < H(); y += step) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W(),y); ctx.stroke(); }
+  ctx.restore();
+}
+
+function drawStars() {
+  stars.forEach(s => {
+    ctx.save(); ctx.globalAlpha = s.a; ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  });
+}
+
+function drawPlayerTrail() {
+  player.trail.forEach((pt, i) => {
+    const t = i / player.trail.length;
+    ctx.save(); ctx.globalAlpha = t * 0.35; ctx.fillStyle = '#7df9ff';
+    ctx.beginPath(); ctx.arc(pt.x, pt.y, PLAYER_SIZE * 0.6 * t, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  });
+}
+
+function drawPlayer() {
+  const { x, y } = player;
+  const t = performance.now() / 1000;
+  const grd = ctx.createRadialGradient(x, y, 2, x, y, PLAYER_SIZE * 2.2);
+  grd.addColorStop(0, 'rgba(125,249,255,0.28)');
+  grd.addColorStop(1, 'rgba(125,249,255,0)');
+  ctx.fillStyle = grd;
+  ctx.beginPath(); ctx.arc(x, y, PLAYER_SIZE * 2.2, 0, Math.PI * 2); ctx.fill();
+  ctx.save(); ctx.translate(x, y); ctx.rotate(Math.PI / 4 + t * 0.5);
+  ctx.fillStyle = '#7df9ff'; ctx.shadowColor = '#7df9ff'; ctx.shadowBlur = 16;
+  const s = PLAYER_SIZE * 1.1;
+  ctx.fillRect(-s/2, -s/2, s, s); ctx.restore();
+  ctx.save(); ctx.translate(x, y); ctx.rotate(Math.PI / 4 + t * 0.5);
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  const si = PLAYER_SIZE * 0.5;
+  ctx.fillRect(-si/2, -si/2, si, si); ctx.restore();
+}
+
+function drawGem(g) {
+  const { x, y, color, angle, pulse } = g;
+  const r = GEM_SIZE + pulse * 3;
+  ctx.save(); ctx.translate(x, y); ctx.rotate(angle);
+  const grd = ctx.createRadialGradient(0, 0, 1, 0, 0, r * 2.5);
+  grd.addColorStop(0, color + 'aa'); grd.addColorStop(1, color + '00');
+  ctx.fillStyle = grd; ctx.beginPath(); ctx.arc(0, 0, r * 2.5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const a = (Math.PI / 3) * i;
+    i === 0 ? ctx.moveTo(Math.cos(a)*r, Math.sin(a)*r) : ctx.lineTo(Math.cos(a)*r, Math.sin(a)*r);
+  }
+  ctx.closePath(); ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 12; ctx.fill();
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const a = (Math.PI / 3) * i; const ri = r * 0.5;
+    i === 0 ? ctx.moveTo(Math.cos(a)*ri, Math.sin(a)*ri) : ctx.lineTo(Math.cos(a)*ri, Math.sin(a)*ri);
+  }
+  ctx.closePath(); ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.fill();
+  ctx.restore();
+}
+
+function drawGems() { gems.forEach(g => drawGem(g)); }
+
+function drawEnemy(e) {
+  const { x, y, color, size, wobble } = e;
+  const spikes = 7;
+  ctx.save(); ctx.translate(x, y);
+  const grd = ctx.createRadialGradient(0, 0, 2, 0, 0, size * 2.8);
+  grd.addColorStop(0, color + 'aa'); grd.addColorStop(1, color + '00');
+  ctx.fillStyle = grd; ctx.beginPath(); ctx.arc(0, 0, size * 2.8, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath();
+  for (let i = 0; i < spikes * 2; i++) {
+    const angle = (Math.PI / spikes) * i + wobble;
+    const r = i % 2 === 0 ? size : size * 0.55;
+    i === 0 ? ctx.moveTo(Math.cos(angle)*r, Math.sin(angle)*r)
+            : ctx.lineTo(Math.cos(angle)*r, Math.sin(angle)*r);
+  }
+  ctx.closePath(); ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 14; ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.beginPath(); ctx.arc(-size*0.25, -size*0.2, size*0.18, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc( size*0.25, -size*0.2, size*0.18, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#0a0a1a';
+  ctx.beginPath(); ctx.arc(-size*0.25, -size*0.18, size*0.09, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc( size*0.25, -size*0.18, size*0.09, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function drawEnemies() { enemies.forEach(e => drawEnemy(e)); }
+
+function drawParticles() {
+  particles.forEach(p => {
+    ctx.save(); ctx.globalAlpha = p.life; ctx.fillStyle = p.color;
+    ctx.shadowColor = p.color; ctx.shadowBlur = 8;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  });
+}
+
+// ── Boot ──────────────────────────────────────────
+startBtn.addEventListener('click', startGame);
+initStars();
+(function idleLoop(now) {
+  if (gameState !== 'idle') return;
+  const dt = Math.min((now - (lastTime || now)) / 1000, 0.05);
+  lastTime = now;
+  ctx.fillStyle = '#0a0a1a'; ctx.fillRect(0, 0, W(), H());
+  drawGrid(); drawStars();
+  stars.forEach(s => { s.a = clamp(s.a + s.da * dt, 0.1, 1); if (s.a <= 0.1 || s.a >= 1) s.da *= -1; });
+  requestAnimationFrame(idleLoop);
+})(performance.now());
+</script>
+</body>
+</html>
